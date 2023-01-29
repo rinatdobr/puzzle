@@ -105,7 +105,7 @@ def to_gray_image(masked_image):
     # Read input image as Grayscale
     return cv2.cvtColor(masked_image, cv2.COLOR_BGR2GRAY)
 
-def get_tiles_counters(gray_image):
+def get_tiles_counter_boxes(gray_image):
     # Convert img to uint8 binary image with values 0 and 255
     # All pixels above 1 goes to 255, and other pixels goes to 0
     _, thresh_gray = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY_INV)
@@ -233,6 +233,7 @@ def draw_subcounter(tile, sidecounter, side, cp):
     return tile_subcounter
 
 def tile_sides(counter, corners, countered_tile, color_aligned_tile, prefix, tile_index):
+    sides = []
     for side_index in range(4):
         side_index = side_index + 1
         corner_0 = 0
@@ -261,51 +262,137 @@ def tile_sides(counter, corners, countered_tile, color_aligned_tile, prefix, til
         sidecounter = get_sidecounter(counter[0], corner_0, corner_1, is_reverse)
         subcountered_tile = draw_subcounter(countered_tile, sidecounter, side_index, False)
         color_subcountered_tile = draw_subcounter(color_aligned_tile, sidecounter, side_index, True)
-        cv2.imwrite('res/tiles/' + prefix + '_tile' + str(tile_index) + '_countered_' + side_prefix + '.jpg', subcountered_tile)
-        cv2.imwrite('res/tiles/' + prefix + '_tile' + str(tile_index) + '_color_countered_' + side_prefix + '.jpg', color_subcountered_tile)
+        sidecounter_hist = side_histogram(color_subcountered_tile)
 
-def process_tile(counter, alpha_image, gray_image, prefix, index):
-    gray_tile = gray_image[counter[0][1]:counter[1][1], counter[0][0]:counter[1][0]]
-    color_tile = alpha_image[counter[0][1]:counter[1][1], counter[0][0]:counter[1][0]]
+        side = {
+            'side' : side_prefix,
+            'subcounter' : 'res/tiles/' + prefix + '_tile' + str(tile_index) + '_countered_' + side_prefix + '.jpg',
+            'color_subcounter' : 'res/tiles/' + prefix + '_tile' + str(tile_index) + '_color_countered_' + side_prefix + '.png',
+            'histogram' : sidecounter_hist
+        }
+
+        sides.append(side)
+
+        cv2.imwrite(side['subcounter'], subcountered_tile)
+        cv2.imwrite(side['color_subcounter'], color_subcountered_tile)
+    
+    return sides
+
+def side_histogram(color_subcountered_tile):
+    hsv_side = cv2.cvtColor(color_subcountered_tile, cv2.COLOR_BGR2HSV)
+    h_bins = 50
+    s_bins = 60
+    histSize = [h_bins, s_bins]
+    # hue varies from 0 to 179, saturation from 0 to 255
+    h_ranges = [0, 180]
+    s_ranges = [0, 256]
+    ranges = h_ranges + s_ranges # concat lists
+    # Use the 0-th and 1-st channels
+    channels = [0, 1]
+    hist_side = cv2.calcHist([hsv_side], channels, None, histSize, ranges, accumulate=False)
+    cv2.normalize(hsv_side, hsv_side, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+    return hist_side
+
+def process_tile(counter_box, alpha_image, gray_image, prefix, index):
+    tile = {
+        'index' : index,
+        'counter_box' : counter_box
+    }
+
+    gray_tile = gray_image[counter_box[0][1]:counter_box[1][1], counter_box[0][0]:counter_box[1][0]]
+    color_tile = alpha_image[counter_box[0][1]:counter_box[1][1], counter_box[0][0]:counter_box[1][0]]
     color_tile = extend_image_size(color_tile, gray_tile.shape[1], 0)
     gray_tile = extend_image_size(gray_tile, gray_tile.shape[1], 0)
     aligned_tile, color_aligned_tile = align_tile(gray_tile, color_tile)
     countered_tile, counter = to_contour_tile(aligned_tile)
     corners, is_valid_corenera = get_tile_corners(countered_tile, counter)
-    cv2.imwrite('res/tiles/' + prefix + '_tile' + str(index) + '_gray.jpg', gray_tile)
-    cv2.imwrite('res/tiles/' + prefix + '_tile' + str(index) + '_color.jpg', color_tile)
-    cv2.imwrite('res/tiles/' + prefix + '_tile' + str(index) + '_aligned.jpg', aligned_tile)
-    cv2.imwrite('res/tiles/' + prefix + '_tile' + str(index) + '_color_aligned.jpg', color_aligned_tile)
-    cv2.imwrite('res/tiles/' + prefix + '_tile' + str(index) + '_countered.jpg', countered_tile)
+    tile['gray'] = 'res/tiles/' + prefix + '_tile' + str(index) + '_gray.jpg'
+    tile['color'] = 'res/tiles/' + prefix + '_tile' + str(index) + '_color.png'
+    tile['aligned'] = 'res/tiles/' + prefix + '_tile' + str(index) + '_aligned.jpg'
+    tile['color_aligned'] = 'res/tiles/' + prefix + '_tile' + str(index) + '_color_aligned.png'
+    tile['countered'] = 'res/tiles/' + prefix + '_tile' + str(index) + '_countered.jpg'
+    cv2.imwrite(tile['gray'], gray_tile)
+    cv2.imwrite(tile['color'], color_tile)
+    cv2.imwrite(tile['aligned'], aligned_tile)
+    cv2.imwrite(tile['color_aligned'], color_aligned_tile)
+    cv2.imwrite(tile['countered'], countered_tile)
 
     if is_valid_corenera:
-        tile_sides(counter, corners, countered_tile, color_aligned_tile, prefix, index)
+        tile['sides'] = tile_sides(counter, corners, countered_tile, color_aligned_tile, prefix, index)
+    
+    return tile
 
-images = [
-        '20230125_082359.jpg'
+image_paths = [
+        '20230127_092620.jpg'
     ]
 
-for image in images:
-    print(image)
+images = []
 
-    original_image = cv2.imread(image)
+# parse for tiles
+for image_path in image_paths:
+    print(image_path)
+
+    image = {
+        'path' : image_path,
+        'tiles' : []
+    }
+
+    original_image = cv2.imread(image_path)
     masked_image = to_masked_image(original_image)
     alpha_image = add_alpha_channel_to_image(masked_image)
     gray_image = to_gray_image(masked_image)
 
     # save results
-    cv2.imwrite('res/' + image + '_masked.jpg', masked_image)
-    cv2.imwrite('res/' + image + '_alpha.png', alpha_image)
+    cv2.imwrite('res/' + image_path + '_masked.jpg', masked_image)
+    cv2.imwrite('res/' + image_path + '_alpha.png', alpha_image)
 
-    corners = get_tiles_counters(gray_image)
+    counter_boxes = get_tiles_counter_boxes(gray_image)
 
-    print('Found', len(corners), 'tiles')
+    print('Found', len(counter_boxes), 'tiles')
 
     # Prepare tiles
-    counter = 0
-    for c in corners:
-        print('====', counter)
-        process_tile(c, alpha_image, gray_image, image, counter)
-        counter = counter + 1
+    index = 0
+    for counter_box in counter_boxes:
+        print('====', index)
+        image['tiles'].append(process_tile(counter_box, alpha_image, gray_image, image_path, index))
+        index = index + 1
+    
+    images.append(image)
+
+def mse(img1, img2):
+    new_shape = (max(img1.shape[1], img2.shape[1]), max(img1.shape[0], img2.shape[0]))
+    img1 = cv2.resize(img1, new_shape, interpolation = cv2.INTER_AREA)
+    img2 = cv2.resize(img2, new_shape, interpolation = cv2.INTER_AREA)
+    cv2.imshow("Resized image 1", img1)
+    cv2.imshow("Resized image 2", img2)
+    cv2.waitKey(0)
+    h, w, chan = img1.shape
+    diff = cv2.subtract(img1, img2)
+    err = np.sum(diff**2)
+    mse = err / (float(h * w))
+    return mse, diff
+
+def compare_tiles(m_tile, tile_image, images):
+    for image in images:
+        for tile in image['tiles']:
+            # if image['path'] == tile_image['path'] and m_tile['index'] == tile['index']:
+            #     print('skipping')
+            #     continue
+
+            print('comparing')
+            for m_side in m_tile['sides']:
+                m_side_img = cv2.imread(m_side['color_subcounter'])
+                for side in tile['sides']:
+                    hist_comparison = cv2.compareHist(m_side['histogram'], side['histogram'], 0)
+                    print(m_side['side'], 'vs', side['side'], hist_comparison)
+                    side_img = cv2.imread(side['color_subcounter'])
+                    print(mse(m_side_img, side_img)[0])
+
+# let's find something
+for image in images:
+    for tile in image['tiles']:
+        compare_tiles(tile, image, images)
+
+# print(images)
 
 exit
